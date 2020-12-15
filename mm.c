@@ -100,11 +100,13 @@ vm_page_family_t * lookup_page_family_by_name(char *struct_name){
 
 	for(itr = family_page_head; itr; itr = itr->next){
 		ITERATE_PAGE_FAMILIES_BEGIN(family_page_head, vm_page_family_curr)
-			// check for duplicates
 			if(strcmp(vm_page_family_curr->struct_name, struct_name) == 0)
-				return;
+				return vm_page_family_curr;
 		ITERATE_PAGE_FAMILIES_END(family_page_head, vm_page_family_curr)
-	}	
+	}
+
+	// no object found.
+	return NULL;
 }
 
 // int main(){
