@@ -4,7 +4,6 @@
 
 #include <stddef.h> /*for size_t*/
 
-
 typedef enum{
     MM_FALSE,
     MM_TRUE
@@ -12,20 +11,31 @@ typedef enum{
 
 typedef struct _block_meta_data{
     vm_bool_t is_free;
-    uint32_t block_size;
-    uint32_t offset;    /* offset from the start of the page */
-    struct _block_meta_data *prev_block;
-    struct _block_meta_data *next_block;
+    uint32_t  block_size;
+    uint32_t  offset;    /* offset from the start of the page */
+    struct    _block_meta_data *prev_block;
+    struct    _block_meta_data *next_block;
 } block_meta_data_t;
 
+struct _vm_page_t;
+
 typedef struct _vm_page_family{
-	char struct_name[MM_MAX_STRUCT_NAME];
-	uint32_t struct_size;	
+	char              struct_name[MM_MAX_STRUCT_NAME];
+	uint32_t          struct_size;
+	struct _vm_page_t *first_page;
 } vm_page_family_t;
 
+typedef struct _vm_page_t{
+	struct _vm_page_t *next;
+	struct _vm_page_t *prev;
+	vm_page_family_t  *pg_family; /* back pointer */
+	block_meta_data_t  block_meta_data;
+	char               page_memory[0]; /* First data block in memory */
+} vm_page_t;
+
 typedef struct _vm_page_for_families{
-	struct _vm_page_for_families *next;
-	vm_page_family_t family_array[0];
+	struct _vm_page_for_families  *next;
+	vm_page_family_t              family_array[0];
 }vm_page_for_families_t;
 
 #define MAX_FAMILIES_PER_VM_PAGE    \
@@ -40,7 +50,26 @@ typedef struct _vm_page_for_families{
 
 #define ITERATE_PAGE_FAMILIES_END(vm_page_for_families_ptr, curr)        }}
 
-vm_page_family_t * lookup_page_family_by_name (char *struct_name);
+#define ITERATE_VM_PAGE_BEGIN(vm_page_family_ptr, curr)  \
+{   for (curr = (vm_page_family_ptr)->first_page;        \
+		curr;                                            \
+		curr = curr->next){
+#define ITERATE_VM_PAGE_END(vm_page_family_ptr, curr)  }}
+
+#define ITERATE_VM_PAGE_ALL_BLOCK_BEGIN(vm_page_ptr, curr) \
+{   for(curr = (vm_page_ptr)->block_meta_data; \
+	    curr && (size_t)curr < (size_t)(vm_page_ptr + SYSTEM_PAGE_SIZE);     \
+	    curr = curr->next_block){
+#define ITERATE_VM_PAGE_ALL_BLOCK_END(vm_page_ptr, curr) }}
+
+vm_page_family_t *lookup_page_family_by_name (char *struct_name);
+vm_bool_t         mm_is_vm_page_empty        (vm_page_t *vm_page);
+vm_page_t        *allocate_vm_page           (vm_page_family_t *vm_page_family);
+
+#define MARK_VM_PAGE_EMPTY(vm_page_t_ptr) \
+	(vm_page_t_ptr)->block_meta_data.prev_block = NULL;   \
+	(vm_page_t_ptr)->block_meta_data.next_block = NULL;   \
+	(vm_page_t_ptr)->block_meta_data.is_free = MM_TRUE;
 
 #define offset_of(container_structure, field_name)                          \
 	((size_t)(&(((container_structure *)0)->field_name)))
@@ -58,3 +87,10 @@ vm_page_family_t * lookup_page_family_by_name (char *struct_name);
 	((block_meta_data_ptr*)                                                 \
 	((char *)((block_meta_data_ptr) + 1) +                                  \
 	((block_meta_data_ptr)->block_size)))
+
+#define mm_bind_blocks_for_allocation(allocated_meta_block, free_meta_block)  \
+    free_meta_block->prev_block = allocated_meta_block;                       \
+    free_meta_block->next_block = allocated_meta_block->next_block;           \
+    allocated_meta_block->next_block = free_meta_block;                       \
+    if (free_meta_block->next_block)                                          \
+	    free_meta_block->next_block->prev_block = free_meta_block

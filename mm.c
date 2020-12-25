@@ -3,6 +3,7 @@
 #include <unistd.h>    /* for get pagesize */
 #include <sys/mman.h>  /* conatins mmap() */
 #include "mm.h"
+#include <assert.h>
 
 static size_t SYSTEM_PAGE_SIZE = 0;
 static vm_page_for_families_t *family_page_head = NULL;
@@ -38,6 +39,10 @@ static void mmap_return_vm_page_to_kernel(void* vm_page, int units){
 	if (munmap(vm_page, units * SYSTEM_PAGE_SIZE)){
 		printf("Error: Could not munmap vm page to kernel\n");
 	}
+}
+
+static inline uint32_t mm_max_page_allocable_memory(int units){
+	return (uint32_t)((SYSTEM_PAGE_SIZE * units) - offset_of(vm_page_t, page_memory));
 }
 
 void mm_instantiate_new_page_family(char *struct_name, int struct_size){
@@ -107,6 +112,67 @@ vm_page_family_t * lookup_page_family_by_name(char *struct_name){
 
 	// no object found.
 	return NULL;
+}
+
+static void mm_union_free_blocks(block_meta_data_t *first, block_meta_data_t *second){
+
+	assert(first->is_free == MM_TRUE && second->is_free == MM_TRUE);
+	first->block_size += second->block_size + sizeof(block_meta_data_t);
+
+	first->next_block = second->next_block;
+	if(second->next_block)
+		second->next_block->prev_block = first;
+}
+
+vm_bool_t mm_is_vm_page_empty(vm_page_t *vm_page){
+
+	if(vm_page->block_meta_data.is_free == MM_TRUE && vm_page->block_meta_data.next_block == NULL && vm_page->block_meta_data.prev_block == NULL)
+		return MM_TRUE;
+	return MM_FALSE;
+}
+
+vm_page_t *allocate_vm_page (vm_page_family_t *vm_page_family){
+	vm_page_t *vm_page = mm_get_new_vm_page_from_kernel(1);
+	MARK_VM_PAGE_EMPTY(vm_page);
+	vm_page->block_meta_data.block_size = mm_max_page_allocable_memory(1);
+	vm_page->block_meta_data.offset =  offset_of(vm_page_t, block_meta_data);
+	vm_page->prev = NULL;
+	vm_page->next = NULL;
+
+	/* Set the back pointer to page_family */
+	vm_page->pg_family = vm_page_family;
+
+	/* If it is the first VM data page for a given page family */
+	if (vm_page_family->first_page == NULL){
+		vm_page_family->first_page = vm_page;
+		return (vm_page);
+	}
+	/* else */
+	vm_page->next = vm_page_family->first_page;
+	vm_page_family->first_page->prev = vm_page;
+	vm_page_family->first_page = vm_page;
+
+	return (vm_page);
+}
+
+void mm_vm_page_delete_and_free(vm_page_t *vm_page){
+	vm_page_family_t* vm_page_family = vm_page->pg_family;
+
+	if(vm_page_family->first_page != vm_page){
+		vm_page_t *prev = vm_page->prev; // prev definitely exists
+		prev->next = vm_page->next;
+		if(vm_page->next){
+			vm_page->next->prev = prev;
+		}
+	} else {
+		// delete first page
+		vm_page_family->first_page = vm_page->next;
+		if(vm_page->next){
+			vm_page->next->prev = NULL;
+		}
+	}
+	mmap_return_vm_page_to_kernel((void *) vm_page, 1);
+	return;
 }
 
 // int main(){
